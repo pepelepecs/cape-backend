@@ -7,7 +7,6 @@ app.use(express.json({ limit: "256kb" }));
 
 const DATA_FILE = path.join(__dirname, "data.json");
 
-// Backward compatible DB:
 let db = { capes: {}, emotes: {} };
 
 try {
@@ -18,6 +17,7 @@ try {
         db.capes = raw.capes && typeof raw.capes === "object" ? raw.capes : {};
         db.emotes = raw.emotes && typeof raw.emotes === "object" ? raw.emotes : {};
       } else {
+
         db.capes = raw;
         db.emotes = {};
       }
@@ -33,34 +33,23 @@ function saveDb() {
   } catch {}
 }
 
-// cleanup capes (např. 7 dní)
+
 function cleanupCapes() {
   const now = Date.now();
   const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
   for (const [uuid, v] of Object.entries(db.capes)) {
-    const lastSeen = (v && v.lastSeen) ? Number(v.lastSeen) : 0;
+    const lastSeen = v && v.lastSeen ? Number(v.lastSeen) : 0;
     if (!lastSeen || now - lastSeen > maxAgeMs) delete db.capes[uuid];
   }
 }
 
 function cleanupEmotes() {
   const now = Date.now();
-  const maxAgeMs = 30 * 1000;     
-  const maxRunMs = 20 * 1000;      
+  const maxAgeMs = 20 * 1000; // po 20s bez lastSeen vyhoď
   for (const [uuid, v] of Object.entries(db.emotes)) {
     if (!v) { delete db.emotes[uuid]; continue; }
-
     const lastSeen = v.lastSeen ? Number(v.lastSeen) : 0;
-    const startedAt = v.startedAt ? Number(v.startedAt) : 0;
-    const active = (v.active !== false);
-
-    if (!active) {
-      if (!lastSeen || now - lastSeen > 3000) delete db.emotes[uuid];
-      continue;
-    }
-
-    if (!lastSeen || now - lastSeen > maxAgeMs) { delete db.emotes[uuid]; continue; }
-    if (startedAt && now - startedAt > maxRunMs) { delete db.emotes[uuid]; continue; }
+    if (!lastSeen || now - lastSeen > maxAgeMs) delete db.emotes[uuid];
   }
 }
 
@@ -103,7 +92,6 @@ app.put("/capes/:uuid", (req, res) => {
 });
 
 // -------------------- EMOTES API --------------------
-
 app.get("/emotes", (req, res) => {
   cleanupEmotes();
   res.json({ players: db.emotes });
@@ -112,22 +100,25 @@ app.get("/emotes", (req, res) => {
 app.put("/emotes/:uuid", (req, res) => {
   const uuid = String(req.params.uuid || "").trim();
   const body = req.body || {};
-
-  const name = String(body.name || "");
-  const type = String(body.type || "");
-  const active = body.active !== false;
-
-  const startedAt = Number(body.startedAt || Date.now());
   const now = Date.now();
 
   if (!uuid) return res.status(400).json({ error: "missing uuid" });
-  if (!type) return res.status(400).json({ error: "missing type" });
+
+  const active = body.active !== false;
+
+  const type = body.type != null ? String(body.type) : "";
+  const name = body.name != null ? String(body.name) : "";
+
+  const startedAtRaw = body.startedAt != null ? Number(body.startedAt) : now;
+  const startedAt = Number.isFinite(startedAtRaw) ? startedAtRaw : now;
+
+  const prev = db.emotes[uuid] || {};
 
   db.emotes[uuid] = {
-    name,
-    type,
+    name: name || prev.name || "",
+    type: type || prev.type || "",
     active,
-    startedAt: Number.isFinite(startedAt) ? startedAt : now,
+    startedAt: active ? startedAt : (prev.startedAt || startedAt),
     lastSeen: now
   };
 
